@@ -7,7 +7,13 @@ module.exports = function(monitoringService) {
   router.get('/', async (req, res) => {
     try {
       const dbList = await WatchlistModel.getAll();
-      const liveStatuses = monitoringService.getAllInstrumentStatuses();
+      let liveStatuses = monitoringService.getAllInstrumentStatuses();
+
+      // Trigger watchlist sync if cache is empty (cold start on serverless)
+      if (liveStatuses.length === 0 && !monitoringService.isInitializing) {
+        monitoringService.syncWatchlist().catch(() => {});
+        liveStatuses = monitoringService.getAllInstrumentStatuses();
+      }
 
       const merged = dbList.map(item => {
         const live = liveStatuses.find(l => l.symbol === item.symbol.toUpperCase());
