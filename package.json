@@ -1,0 +1,13 @@
+{
+  "name": "ema-200-touch-alert-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "EMA 200 Touch Alert market monitoring application",
+  "scripts": {
+    "start": "node backend/src/server.js",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "test": "cd backend && npm test",
+    "build:frontend": "cd frontend && npm run build"
+  }
+}

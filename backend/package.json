@@ -1,0 +1,22 @@
+{
+  "name": "ema-200-notifier-backend",
+  "version": "1.0.0",
+  "description": "Backend engine for EMA 200 Touch Alert market monitoring",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test tests/ema.test.js tests/candle.test.js tests/alertDetection.test.js tests/telegram.test.js",
+    "get-chat-id": "node scripts/get-chat-id.js",
+    "setup-db": "node scripts/setup-db.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "pg": "^8.13.1",
+    "ws": "^8.18.0"
+  }
+}
