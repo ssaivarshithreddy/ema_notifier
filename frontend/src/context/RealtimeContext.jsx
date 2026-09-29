@@ -10,9 +10,10 @@ export function RealtimeProvider({ children }) {
   const [lastUpdate, setLastUpdate] = useState(Date.now());
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
+  const pollTimerRef = useRef(null);
   const isComponentMountedRef = useRef(true);
 
-  // Fallback REST polling if WebSocket is disconnected
+  // Active REST polling for Vercel / serverless deployments
   const fetchWatchlistSnapshot = async () => {
     try {
       const resp = await axios.get('/api/watchlist');
@@ -29,15 +30,37 @@ export function RealtimeProvider({ children }) {
     }
   };
 
+  const startHttpPolling = () => {
+    setConnectionStatus('CONNECTED');
+    fetchWatchlistSnapshot();
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    pollTimerRef.current = setInterval(() => {
+      if (isComponentMountedRef.current) {
+        fetchWatchlistSnapshot();
+      }
+    }, 3000);
+  };
+
   const connectWebSocket = () => {
     if (!isComponentMountedRef.current) return;
+
+    const customWsUrl = import.meta.env.VITE_WS_URL;
+    const isVercel = window.location.hostname.includes('vercel.app');
+    const isHttps = window.location.protocol === 'https:';
+
+    // On Vercel / HTTPS without custom WS server, use HTTP polling (Vercel serverless functions do not support persistent WebSockets)
+    if ((isVercel || isHttps) && !customWsUrl) {
+      startHttpPolling();
+      return;
+    }
+
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const protocol = isHttps ? 'wss:' : 'ws:';
     const host = window.location.hostname || 'localhost';
-    const wsUrl = import.meta.env.VITE_WS_URL || `${protocol}//${host}:5000`;
+    const wsUrl = customWsUrl || `${protocol}//${host}:5000`;
 
     setConnectionStatus('RECONNECTING');
     let ws;
@@ -45,7 +68,7 @@ export function RealtimeProvider({ children }) {
       ws = new WebSocket(wsUrl);
       wsRef.current = ws;
     } catch (err) {
-      scheduleReconnect();
+      startHttpPolling();
       return;
     }
 
@@ -56,6 +79,11 @@ export function RealtimeProvider({ children }) {
       }
       setConnectionStatus('CONNECTED');
       setLastUpdate(Date.now());
+      // Stop REST polling if WS is active
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
     };
 
     ws.onmessage = (event) => {
@@ -91,20 +119,17 @@ export function RealtimeProvider({ children }) {
           }
         }
       } catch (err) {
-        // ignore parse error
+        // ignore
       }
     };
 
     ws.onclose = () => {
       if (isComponentMountedRef.current) {
-        setConnectionStatus('DISCONNECTED');
-        fetchWatchlistSnapshot(); // Fallback update
-        scheduleReconnect();
+        startHttpPolling();
       }
     };
 
     ws.onerror = () => {
-      // Gracefully handle connection error without crashing
       try {
         if (ws.readyState === WebSocket.OPEN) {
           ws.close();
@@ -112,27 +137,18 @@ export function RealtimeProvider({ children }) {
       } catch (e) {
         // ignore
       }
+      startHttpPolling();
     };
-  };
-
-  const scheduleReconnect = () => {
-    if (!isComponentMountedRef.current) return;
-    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-    reconnectTimerRef.current = setTimeout(() => {
-      connectWebSocket();
-    }, 3000);
   };
 
   useEffect(() => {
     isComponentMountedRef.current = true;
     connectWebSocket();
 
-    // Initial snapshot fetch
-    fetchWatchlistSnapshot();
-
     return () => {
       isComponentMountedRef.current = false;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
 
       if (wsRef.current) {
         const socket = wsRef.current;
@@ -140,7 +156,6 @@ export function RealtimeProvider({ children }) {
         if (socket.readyState === WebSocket.OPEN) {
           socket.close();
         } else if (socket.readyState === WebSocket.CONNECTING) {
-          // Close gracefully after open to avoid StrictMode warning
           socket.onopen = () => {
             try { socket.close(); } catch (e) {}
           };

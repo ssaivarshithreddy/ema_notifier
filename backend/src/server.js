@@ -17,13 +17,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Lazy-initialized Monitoring Engine instance
+// Singleton monitoring instance
 let monitoringServiceInstance = null;
 let dbInitialized = false;
 
 async function getMonitoringService() {
   if (!dbInitialized) {
-    await db.initDb();
+    await db.initDb().catch(err => logger.warn('[DB] Init warning:', err.message));
     dbInitialized = true;
   }
   if (!monitoringServiceInstance) {
@@ -35,7 +35,7 @@ async function getMonitoringService() {
   return monitoringServiceInstance;
 }
 
-// Middleware to attach monitoringService to request context
+// Attach monitoringService to request context
 app.use(async (req, res, next) => {
   try {
     req.monitoringService = await getMonitoringService();
@@ -45,19 +45,23 @@ app.use(async (req, res, next) => {
   }
 });
 
-// Register API Routes
-app.use('/', (req, res, next) => {
-  if (req.path === '/health' || req.path === '/') {
+// Dual path routing to support Vercel rewrites (stripping or keeping /api prefix)
+app.use(['/health', '/api/health'], (req, res, next) => healthRoute(req.monitoringService)(req, res, next));
+app.use(['/api/watchlist', '/watchlist'], (req, res, next) => watchlistRoute(req.monitoringService)(req, res, next));
+app.use(['/api/alerts', '/alerts'], (req, res, next) => alertsRoute()(req, res, next));
+app.use('/api/settings', (req, res, next) => settingsRoute()(req, res, next));
+app.use('/settings', (req, res, next) => settingsRoute()(req, res, next));
+app.use(['/api/candles', '/candles'], (req, res, next) => candlesRoute(req.monitoringService)(req, res, next));
+
+// Health check root
+app.get('/', (req, res, next) => {
+  if (req.path === '/') {
     return healthRoute(req.monitoringService)(req, res, next);
   }
   next();
 });
-app.use('/api/watchlist', (req, res, next) => watchlistRoute(req.monitoringService)(req, res, next));
-app.use('/api/alerts', (req, res, next) => alertsRoute()(req, res, next));
-app.use('/api/settings', (req, res, next) => settingsRoute()(req, res, next));
-app.use('/api/candles', (req, res, next) => candlesRoute(req.monitoringService)(req, res, next));
 
-// Start standalone HTTP & WebSocket server if run directly (node src/server.js)
+// Standalone server mode
 if (require.main === module || process.env.STANDALONE_SERVER === 'true') {
   const PORT = env.PORT || 5000;
   getMonitoringService().then((monitoringService) => {
