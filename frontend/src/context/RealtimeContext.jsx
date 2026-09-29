@@ -37,7 +37,7 @@ export function RealtimeProvider({ children }) {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.hostname || 'localhost';
-    const wsUrl = `${protocol}//${host}:5000`;
+    const wsUrl = import.meta.env.VITE_WS_URL || `${protocol}//${host}:5000`;
 
     setConnectionStatus('RECONNECTING');
     let ws;

@@ -13,40 +13,62 @@ const settingsRoute = require('./routes/settings');
 const candlesRoute = require('./routes/candles');
 const healthRoute = require('./routes/health');
 
-async function bootstrap() {
-  const app = express();
-  app.use(cors());
-  app.use(express.json());
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-  // Initialize DB connection
-  await db.initDb();
+// Lazy-initialized Monitoring Engine instance
+let monitoringServiceInstance = null;
+let dbInitialized = false;
 
-  // Instantiate Monitoring Engine
-  const monitoringService = new MonitoringService();
+async function getMonitoringService() {
+  if (!dbInitialized) {
+    await db.initDb();
+    dbInitialized = true;
+  }
+  if (!monitoringServiceInstance) {
+    monitoringServiceInstance = new MonitoringService();
+    monitoringServiceInstance.start().catch(err => {
+      logger.error('[Server] Monitoring engine start error:', err);
+    });
+  }
+  return monitoringServiceInstance;
+}
 
-  // Register API Routes
-  app.use('/', healthRoute(monitoringService));
-  app.use('/api/watchlist', watchlistRoute(monitoringService));
-  app.use('/api/alerts', alertsRoute(monitoringService));
-  app.use('/api/settings', settingsRoute(monitoringService));
-  app.use('/api/candles', candlesRoute(monitoringService));
+// Middleware to attach monitoringService to request context
+app.use(async (req, res, next) => {
+  try {
+    req.monitoringService = await getMonitoringService();
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
-  // HTTP & WebSocket Server Creation
-  const server = http.createServer(app);
-  initWebSocketServer(server, monitoringService);
+// Register API Routes
+app.use('/', (req, res, next) => {
+  if (req.path === '/health' || req.path === '/') {
+    return healthRoute(req.monitoringService)(req, res, next);
+  }
+  next();
+});
+app.use('/api/watchlist', (req, res, next) => watchlistRoute(req.monitoringService)(req, res, next));
+app.use('/api/alerts', (req, res, next) => alertsRoute()(req, res, next));
+app.use('/api/settings', (req, res, next) => settingsRoute()(req, res, next));
+app.use('/api/candles', (req, res, next) => candlesRoute(req.monitoringService)(req, res, next));
 
+// Start standalone HTTP & WebSocket server if run directly (node src/server.js)
+if (require.main === module || process.env.STANDALONE_SERVER === 'true') {
   const PORT = env.PORT || 5000;
-  server.listen(PORT, async () => {
-    logger.info(`====================================================`);
-    logger.info(`  EMA 200 Touch Alert Backend running on port ${PORT} `);
-    logger.info(`====================================================`);
-
-    // Start Monitoring Engine
-    await monitoringService.start();
+  getMonitoringService().then((monitoringService) => {
+    const server = http.createServer(app);
+    initWebSocketServer(server, monitoringService);
+    server.listen(PORT, () => {
+      logger.info(`====================================================`);
+      logger.info(`  EMA 200 Touch Alert Backend running on port ${PORT} `);
+      logger.info(`====================================================`);
+    });
   });
 }
 
-bootstrap().catch(err => {
-  logger.error('Fatal bootstrap error:', err);
-  process.exit(1);
-});
+module.exports = app;
